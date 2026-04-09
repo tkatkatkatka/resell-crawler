@@ -7,15 +7,51 @@ on:
         description: '검색 키워드'
         required: true
         default: '루이비통'
+      chunk_start:
+        description: '시작 청크 번호'
+        required: false
+        default: '41'
+      chunk_end:
+        description: '끝 청크 번호'
+        required: false
+        default: '60'
+      total_chunks:
+        description: '전체 청크 수'
+        required: false
+        default: '80'
+      max_workers:
+        description: '청크당 동시 요청 수'
+        required: false
+        default: '3'
+      delay_min:
+        description: '딜레이 최소(초)'
+        required: false
+        default: '0.5'
+      delay_max:
+        description: '딜레이 최대(초)'
+        required: false
+        default: '1.0'
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - id: gen
+        run: |
+          START=${{ github.event.inputs.chunk_start }}
+          END=${{ github.event.inputs.chunk_end }}
+          MATRIX=$(python3 -c "import json; print(json.dumps({'chunk': list(range(int(''), int('')+1))}))" 2>/dev/null || python3 -c "import json,sys; s,e=int(sys.argv[1]),int(sys.argv[2]); print(json.dumps({'chunk':list(range(s,e+1))}))" $START $END)
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
   crawl:
+    needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
-      matrix:
-        chunk: [61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80]
-      max-parallel: 20
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+      max-parallel: 50
       fail-fast: false
 
     steps:
@@ -31,7 +67,8 @@ jobs:
 
       - name: Run crawler (1차 시도)
         id: crawl1
-        run: python crawler.py "${{ github.event.inputs.keyword }}" "${{ matrix.chunk }}" 80
+        run: |
+          python crawler.py             "${{ github.event.inputs.keyword }}"             "${{ matrix.chunk }}"             "${{ github.event.inputs.total_chunks }}"             "${{ github.event.inputs.max_workers }}"             "${{ github.event.inputs.delay_min }}"             "${{ github.event.inputs.delay_max }}"
         continue-on-error: true
 
       - name: Check if retry needed
@@ -43,7 +80,7 @@ jobs:
             COLLECTED=$(python3 -c "import json; d=json.load(open('$FILE')); print(d.get('stats',{}).get('collected',0))")
             NEED_RETRY=$(python3 -c "print('true' if float('$BLOCK_RATE') >= 0.5 else 'false')")
             echo "need_retry=$NEED_RETRY" >> $GITHUB_OUTPUT
-            echo "수집: $COLLECTED건 / 차단율: $BLOCK_RATE → 재시도: $NEED_RETRY"
+            echo "수집: $COLLECTED건 / 차단율: $BLOCK_RATE"
           else
             echo "need_retry=true" >> $GITHUB_OUTPUT
           fi
@@ -56,7 +93,8 @@ jobs:
 
       - name: Run crawler (2차 재시도)
         if: steps.check.outputs.need_retry == 'true'
-        run: python crawler.py "${{ github.event.inputs.keyword }}" "${{ matrix.chunk }}" 80
+        run: |
+          python crawler.py             "${{ github.event.inputs.keyword }}"             "${{ matrix.chunk }}"             "${{ github.event.inputs.total_chunks }}"             "${{ github.event.inputs.max_workers }}"             "${{ github.event.inputs.delay_min }}"             "${{ github.event.inputs.delay_max }}"
 
       - name: Upload results
         uses: actions/upload-artifact@v4
