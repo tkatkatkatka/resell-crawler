@@ -19,14 +19,12 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0',
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
 ]
-
 ACCEPT_LANGS = [
     'ko-KR,ko;q=0.9',
     'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
     'ko,en-US;q=0.9,en;q=0.8',
     'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
 ]
-
 REFERERS = [
     'https://www.daangn.com/kr/buy-sell/',
     'https://www.daangn.com/kr/buy-sell/s/',
@@ -114,7 +112,6 @@ def main():
     start = (chunk - 1) * chunk_size
     end = min(start + chunk_size, total)
     regions = all_regions[start:end]
-
     print(f"청크 {chunk}/{total_chunks}: {start}~{end} ({len(regions)}개 지역) 키워드: {keyword}")
 
     results = {}
@@ -127,21 +124,30 @@ def main():
     def process(region):
         nonlocal done, blocked, timeout_cnt
         rid = get_region_id(region)
-        rname = region.get('name3') or region.get('name', rid)
+
         status, articles = search_region(keyword, rid)
 
+        # 차단 시: 점점 늘어나는 대기 후 최대 3회 재시도
         if status == 'blocked':
             with lock:
                 blocked += 1
-                blocked_regions.append(rid)
-            time.sleep(random.uniform(3.0, 5.0))
-            status, articles = search_region(keyword, rid)
-            if status == 'blocked':
+            for wait in [5, 10, 20]:
+                time.sleep(random.uniform(wait, wait * 1.5))
+                status, articles = search_region(keyword, rid)
+                if status != 'blocked':
+                    with lock:
+                        blocked -= 1  # 재시도 성공 시 차단 카운트 취소
+                    break
+            else:
+                # 3회 모두 차단 → blocked_regions에 기록
+                with lock:
+                    blocked_regions.append(rid)
                 return
 
         if status == 'timeout':
             with lock:
                 timeout_cnt += 1
+            return
 
         if status == 'ok':
             parsed = parse_articles(articles)
@@ -154,8 +160,13 @@ def main():
             if done % 50 == 0:
                 print(f"진행: {done}/{len(regions)} / 수집: {len(results)}건 / 차단: {blocked} / 타임아웃: {timeout_cnt}")
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         executor.map(process, regions)
+
+    # IP 전체 차단 감지: 수집 0건 + 차단 지역이 절반 이상이면 경고
+    block_rate = len(blocked_regions) / len(regions) if regions else 0
+    if block_rate >= 0.5:
+        print(f"⚠️  경고: IP 차단 의심 - 차단율 {block_rate*100:.0f}% ({len(blocked_regions)}/{len(regions)}개 지역)")
 
     output = {
         'items': list(results.values()),
@@ -163,15 +174,14 @@ def main():
         'stats': {
             'total_regions': len(regions),
             'collected': len(results),
-            'blocked': blocked,
+            'blocked': len(blocked_regions),
             'timeout': timeout_cnt,
+            'block_rate': round(block_rate, 3),
         }
     }
-
     output_file = f'results_{chunk}.json'
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False)
-
     print(f"완료! {len(results)}건 저장 / 차단지역: {len(blocked_regions)}개 -> {output_file}")
 
 if __name__ == '__main__':
