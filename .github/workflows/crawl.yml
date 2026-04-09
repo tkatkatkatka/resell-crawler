@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       keyword:
-        description: '검색 키워드 (예: 루이비통)'
+        description: '검색 키워드'
         required: true
         default: '루이비통'
 
@@ -14,28 +14,53 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        chunk: [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60]
+        chunk: [41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60]
+      max-parallel: 20
       fail-fast: false
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        cache: 'pip'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    - name: Install dependencies
-      run: pip install requests
+      - name: Install dependencies
+        run: pip install requests
 
-    - name: Run crawler
-      run: python crawler.py "${{ github.event.inputs.keyword }}" "${{ matrix.chunk }}" 80
+      - name: Run crawler (1차 시도)
+        id: crawl1
+        run: python crawler.py "${{ github.event.inputs.keyword }}" "${{ matrix.chunk }}" 80
+        continue-on-error: true
 
-    - name: Upload results
-      uses: actions/upload-artifact@v4
-      with:
-        name: results-chunk-${{ matrix.chunk }}
-        path: results_${{ matrix.chunk }}.json
-        retention-days: 1
+      - name: Check if retry needed
+        id: check
+        run: |
+          FILE="results_${{ matrix.chunk }}.json"
+          if [ -f "$FILE" ]; then
+            BLOCK_RATE=$(python3 -c "import json; d=json.load(open('$FILE')); print(d.get('stats',{}).get('block_rate',0))")
+            COLLECTED=$(python3 -c "import json; d=json.load(open('$FILE')); print(d.get('stats',{}).get('collected',0))")
+            NEED_RETRY=$(python3 -c "print('true' if float('$BLOCK_RATE') >= 0.5 else 'false')")
+            echo "need_retry=$NEED_RETRY" >> $GITHUB_OUTPUT
+            echo "수집: $COLLECTED건 / 차단율: $BLOCK_RATE → 재시도: $NEED_RETRY"
+          else
+            echo "need_retry=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Wait before retry
+        if: steps.check.outputs.need_retry == 'true'
+        run: |
+          echo "IP 차단 감지 - 60초 대기 후 재시도..."
+          sleep 60
+
+      - name: Run crawler (2차 재시도)
+        if: steps.check.outputs.need_retry == 'true'
+        run: python crawler.py "${{ github.event.inputs.keyword }}" "${{ matrix.chunk }}" 80
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-chunk-${{ matrix.chunk }}
+          path: results_${{ matrix.chunk }}.json
+          retention-days: 1
