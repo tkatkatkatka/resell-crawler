@@ -58,7 +58,7 @@ def search_region(keyword, region_id, retry=0):
            f'?search={kw_enc}&in={region_id}'
            f'&_data=routes%2Fkr.buy-sell._index')
     try:
-        time.sleep(random.uniform(0.5, 1.0))
+        time.sleep(random.uniform(delay_min, delay_max))
         r = requests.get(url, headers=get_headers(), timeout=15)
         if r.status_code in (403, 429):
             return 'blocked', []
@@ -96,9 +96,12 @@ def parse_articles(articles):
     return results
 
 def main():
-    keyword = sys.argv[1] if len(sys.argv) > 1 else '루이비통'
-    chunk = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    keyword      = sys.argv[1] if len(sys.argv) > 1 else '루이비통'
+    chunk        = int(sys.argv[2]) if len(sys.argv) > 2 else 1
     total_chunks = int(sys.argv[3]) if len(sys.argv) > 3 else 80
+    max_workers  = int(sys.argv[4])   if len(sys.argv) > 4 else 3
+    delay_min    = float(sys.argv[5]) if len(sys.argv) > 5 else 0.5
+    delay_max    = float(sys.argv[6]) if len(sys.argv) > 6 else 1.0
 
     try:
         with open('regions.json', encoding='utf-8') as f:
@@ -160,7 +163,7 @@ def main():
             if done % 50 == 0:
                 print(f"진행: {done}/{len(regions)} / 수집: {len(results)}건 / 차단: {blocked} / 타임아웃: {timeout_cnt}")
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         executor.map(process, regions)
 
     # IP 전체 차단 감지: 수집 0건 + 차단 지역이 절반 이상이면 경고
