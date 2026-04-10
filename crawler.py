@@ -45,13 +45,6 @@ def get_headers():
         'Connection': 'keep-alive',
     }
 
-def get_region_id(region):
-    name = region.get('name3') or region.get('name', '')
-    rid = region.get('id', '')
-    if name and rid:
-        return f"{name}-{rid}"
-    return str(rid)
-
 def search_region(keyword, region_id, retry=0):
     kw_enc = urllib.parse.quote(keyword)
     url = (f'https://www.daangn.com/kr/buy-sell/'
@@ -103,6 +96,11 @@ def main():
     delay_min    = float(sys.argv[5]) if len(sys.argv) > 5 else 0.5
     delay_max    = float(sys.argv[6]) if len(sys.argv) > 6 else 1.0
 
+    # 전역 변수로 사용하기 위해 함수 내에서 global 선언
+    global delay_min_global, delay_max_global
+    delay_min_global = delay_min
+    delay_max_global = delay_max
+
     try:
         with open('regions.json', encoding='utf-8') as f:
             all_regions = json.load(f)
@@ -126,11 +124,11 @@ def main():
 
     def process(region):
         nonlocal done, blocked, timeout_cnt
-        rid = get_region_id(region)
+        # ✅ 수정: 지역 ID는 숫자만 사용
+        rid = str(region.get('id', ''))
 
         status, articles = search_region(keyword, rid)
 
-        # 차단 시: 점점 늘어나는 대기 후 최대 3회 재시도
         if status == 'blocked':
             with lock:
                 blocked += 1
@@ -139,10 +137,9 @@ def main():
                 status, articles = search_region(keyword, rid)
                 if status != 'blocked':
                     with lock:
-                        blocked -= 1  # 재시도 성공 시 차단 카운트 취소
+                        blocked -= 1
                     break
             else:
-                # 3회 모두 차단 → blocked_regions에 기록
                 with lock:
                     blocked_regions.append(rid)
                 return
@@ -166,7 +163,6 @@ def main():
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         executor.map(process, regions)
 
-    # IP 전체 차단 감지: 수집 0건 + 차단 지역이 절반 이상이면 경고
     block_rate = len(blocked_regions) / len(regions) if regions else 0
     if block_rate >= 0.5:
         print(f"⚠️  경고: IP 차단 의심 - 차단율 {block_rate*100:.0f}% ({len(blocked_regions)}/{len(regions)}개 지역)")
