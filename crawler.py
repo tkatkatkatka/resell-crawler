@@ -6,15 +6,31 @@ import urllib.parse
 import requests
 from concurrent.futures import ThreadPoolExecutor
 import threading
-import traceback
 
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
 ]
-ACCEPT_LANGS = ['ko-KR,ko;q=0.9', 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7']
-REFERERS = ['https://www.daangn.com/kr/buy-sell/', 'https://www.daangn.com/kr/']
+ACCEPT_LANGS = [
+    'ko-KR,ko;q=0.9',
+    'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+    'ko,en-US;q=0.9,en;q=0.8',
+    'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
+]
+REFERERS = [
+    'https://www.daangn.com/kr/buy-sell/',
+    'https://www.daangn.com/kr/buy-sell/s/',
+    'https://www.daangn.com/kr/',
+    'https://www.daangn.com/',
+]
 
 def get_headers():
     return {
@@ -42,12 +58,10 @@ def search_region(keyword, region_id, retry=0):
         data = r.json()
         articles = (data.get('allPage') or {}).get('fleamarketArticles', [])
         if not articles:
-            # 디버그: 빈 배열일 때 응답 일부 출력
             print(f"  [DEBUG] 지역 {region_id} 응답: {str(data)[:200]}")
         return 'ok', articles
     except Exception as e:
         print(f"  [ERROR] 지역 {region_id} 예외: {e}")
-        traceback.print_exc()
         if retry < 2:
             time.sleep(random.uniform(1.0, 2.0))
             return search_region(keyword, region_id, retry + 1)
