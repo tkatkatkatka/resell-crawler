@@ -6,6 +6,7 @@ import urllib.parse
 import requests
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import os
 
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -103,6 +104,23 @@ def main():
     print(f"=== Crawler 시작 ===")
     print(f"키워드: {keyword}, 청크: {chunk}/{total_chunks}, workers: {max_workers}, 딜레이: {delay_min}~{delay_max}")
 
+    output_file = f'results_{chunk}.json'
+    existing_results = {}
+    existing_blocked = []
+    is_retry = False
+
+    if os.path.exists(output_file):
+        is_retry = True
+        print(f"📂 기존 결과 파일 발견: {output_file} → 차단 지역만 재시도합니다.")
+        with open(output_file, 'r', encoding='utf-8') as f:
+            old_data = json.load(f)
+            for item in old_data.get('items', []):
+                existing_results[item['id']] = item
+            existing_blocked = old_data.get('blocked_regions', [])
+        print(f"   기존 수집: {len(existing_results)}건, 차단 지역: {len(existing_blocked)}개")
+    else:
+        print(f"🆕 첫 실행: 전체 지역을 크롤링합니다.")
+
     try:
         with open('regions.json', encoding='utf-8') as f:
             all_regions = json.load(f)
@@ -116,9 +134,22 @@ def main():
     start = (chunk - 1) * chunk_size
     end = min(start + chunk_size, total)
     regions = all_regions[start:end]
-    print(f"청크 범위: {start}~{end} ({len(regions)}개 지역)")
 
-    results = {}
+    if is_retry:
+        filtered_regions = []
+        blocked_set = set(existing_blocked)
+        for r in regions:
+            if str(r.get('id', '')) in blocked_set:
+                filtered_regions.append(r)
+        regions = filtered_regions
+        print(f"🔄 재시도 대상 지역: {len(regions)}개")
+        if not regions:
+            print("⚠️ 재시도할 차단 지역이 없습니다. 기존 결과를 유지합니다.")
+            return
+
+    print(f"청크 범위: {start}~{end} (총 {len(regions)}개 지역)")
+
+    results = dict(existing_results) if is_retry else {}
     blocked_regions = []
     done = 0
     blocked = 0
@@ -137,17 +168,8 @@ def main():
         if status == 'blocked':
             with lock:
                 blocked += 1
-            for wait in [5, 10, 20]:
-                time.sleep(random.uniform(wait, wait * 1.5))
-                status, articles = search_region(keyword, rid)
-                if status != 'blocked':
-                    with lock:
-                        blocked -= 1
-                    break
-            else:
-                with lock:
-                    blocked_regions.append(rid)
-                return
+                blocked_regions.append(rid)
+            return
 
         if status == 'timeout':
             with lock:
@@ -170,25 +192,25 @@ def main():
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         executor.map(process, regions)
 
-    block_rate = len(blocked_regions) / len(regions) if regions else 0
+    final_blocked = blocked_regions
+    block_rate = len(final_blocked) / len(regions) if regions else 0
     if block_rate >= 0.5:
-        print(f"⚠️ 경고: IP 차단 의심 - 차단율 {block_rate*100:.0f}% ({len(blocked_regions)}/{len(regions)}개 지역)")
+        print(f"⚠️ 경고: IP 차단 의심 - 차단율 {block_rate*100:.0f}% ({len(final_blocked)}/{len(regions)}개 지역)")
 
     output = {
         'items': list(results.values()),
-        'blocked_regions': blocked_regions,
+        'blocked_regions': final_blocked,
         'stats': {
             'total_regions': len(regions),
             'collected': len(results),
-            'blocked': len(blocked_regions),
+            'blocked': len(final_blocked),
             'timeout': timeout_cnt,
             'block_rate': round(block_rate, 3),
         }
     }
-    output_file = f'results_{chunk}.json'
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False)
-    print(f"✅ 완료! {len(results)}건 저장 / 차단지역: {len(blocked_regions)}개 -> {output_file}")
+    print(f"✅ 완료! {len(results)}건 저장 / 차단지역: {len(final_blocked)}개 -> {output_file}")
 
 if __name__ == '__main__':
     main()
