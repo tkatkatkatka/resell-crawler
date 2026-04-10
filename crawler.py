@@ -6,31 +6,15 @@ import urllib.parse
 import requests
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import traceback
 
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
 ]
-ACCEPT_LANGS = [
-    'ko-KR,ko;q=0.9',
-    'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-    'ko,en-US;q=0.9,en;q=0.8',
-    'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
-]
-REFERERS = [
-    'https://www.daangn.com/kr/buy-sell/',
-    'https://www.daangn.com/kr/buy-sell/s/',
-    'https://www.daangn.com/kr/',
-    'https://www.daangn.com/',
-]
+ACCEPT_LANGS = ['ko-KR,ko;q=0.9', 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7']
+REFERERS = ['https://www.daangn.com/kr/buy-sell/', 'https://www.daangn.com/kr/']
 
 def get_headers():
     return {
@@ -57,8 +41,13 @@ def search_region(keyword, region_id, retry=0):
             return 'blocked', []
         data = r.json()
         articles = (data.get('allPage') or {}).get('fleamarketArticles', [])
+        if not articles:
+            # 디버그: 빈 배열일 때 응답 일부 출력
+            print(f"  [DEBUG] 지역 {region_id} 응답: {str(data)[:200]}")
         return 'ok', articles
-    except Exception:
+    except Exception as e:
+        print(f"  [ERROR] 지역 {region_id} 예외: {e}")
+        traceback.print_exc()
         if retry < 2:
             time.sleep(random.uniform(1.0, 2.0))
             return search_region(keyword, region_id, retry + 1)
@@ -89,6 +78,7 @@ def parse_articles(articles):
     return results
 
 def main():
+    global delay_min, delay_max
     keyword      = sys.argv[1] if len(sys.argv) > 1 else '루이비통'
     chunk        = int(sys.argv[2]) if len(sys.argv) > 2 else 1
     total_chunks = int(sys.argv[3]) if len(sys.argv) > 3 else 80
@@ -96,16 +86,15 @@ def main():
     delay_min    = float(sys.argv[5]) if len(sys.argv) > 5 else 0.5
     delay_max    = float(sys.argv[6]) if len(sys.argv) > 6 else 1.0
 
-    # 전역 변수로 사용하기 위해 함수 내에서 global 선언
-    global delay_min_global, delay_max_global
-    delay_min_global = delay_min
-    delay_max_global = delay_max
+    print(f"=== Crawler 시작 ===")
+    print(f"키워드: {keyword}, 청크: {chunk}/{total_chunks}, workers: {max_workers}, 딜레이: {delay_min}~{delay_max}")
 
     try:
         with open('regions.json', encoding='utf-8') as f:
             all_regions = json.load(f)
+        print(f"regions.json 로드 성공: 총 {len(all_regions)}개 지역")
     except Exception as e:
-        print(f"지역 목록 로드 실패: {e}")
+        print(f"❌ regions.json 로드 실패: {e}")
         sys.exit(1)
 
     total = len(all_regions)
@@ -113,7 +102,7 @@ def main():
     start = (chunk - 1) * chunk_size
     end = min(start + chunk_size, total)
     regions = all_regions[start:end]
-    print(f"청크 {chunk}/{total_chunks}: {start}~{end} ({len(regions)}개 지역) 키워드: {keyword}")
+    print(f"청크 범위: {start}~{end} ({len(regions)}개 지역)")
 
     results = {}
     blocked_regions = []
@@ -124,8 +113,10 @@ def main():
 
     def process(region):
         nonlocal done, blocked, timeout_cnt
-        # ✅ 수정: 지역 ID는 숫자만 사용
         rid = str(region.get('id', ''))
+        if not rid:
+            print(f"  [경고] 지역 ID 없음: {region}")
+            return
 
         status, articles = search_region(keyword, rid)
 
@@ -154,18 +145,20 @@ def main():
             with lock:
                 for item in parsed:
                     results[item['id']] = item
+                if parsed:
+                    print(f"  [수집] 지역 {rid} ({region.get('name', '')}) - {len(parsed)}건")
 
         with lock:
             done += 1
-            if done % 50 == 0:
-                print(f"진행: {done}/{len(regions)} / 수집: {len(results)}건 / 차단: {blocked} / 타임아웃: {timeout_cnt}")
+            if done % 10 == 0:
+                print(f"진행: {done}/{len(regions)} / 누적 {len(results)}건 / 차단:{blocked} / 타임아웃:{timeout_cnt}")
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         executor.map(process, regions)
 
     block_rate = len(blocked_regions) / len(regions) if regions else 0
     if block_rate >= 0.5:
-        print(f"⚠️  경고: IP 차단 의심 - 차단율 {block_rate*100:.0f}% ({len(blocked_regions)}/{len(regions)}개 지역)")
+        print(f"⚠️ 경고: IP 차단 의심 - 차단율 {block_rate*100:.0f}% ({len(blocked_regions)}/{len(regions)}개 지역)")
 
     output = {
         'items': list(results.values()),
@@ -181,7 +174,7 @@ def main():
     output_file = f'results_{chunk}.json'
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False)
-    print(f"완료! {len(results)}건 저장 / 차단지역: {len(blocked_regions)}개 -> {output_file}")
+    print(f"✅ 완료! {len(results)}건 저장 / 차단지역: {len(blocked_regions)}개 -> {output_file}")
 
 if __name__ == '__main__':
     main()
