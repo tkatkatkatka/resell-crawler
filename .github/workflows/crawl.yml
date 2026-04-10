@@ -10,11 +10,11 @@ on:
       chunk_start:
         description: '시작 청크 번호'
         required: false
-        default: '41'
+        default: '1'
       chunk_end:
         description: '끝 청크 번호'
         required: false
-        default: '60'
+        default: '20'
       total_chunks:
         description: '전체 청크 수'
         required: false
@@ -90,11 +90,12 @@ jobs:
         run: |
           FILE="results_${{ matrix.chunk }}.json"
           if [ -f "$FILE" ]; then
-            BLOCK_RATE=$(python3 -c "import json; d=json.load(open('$FILE')); print(d.get('stats',{}).get('block_rate',0))")
+            BLOCKED_COUNT=$(python3 -c "import json; d=json.load(open('$FILE')); print(len(d.get('blocked_regions', [])))")
             COLLECTED=$(python3 -c "import json; d=json.load(open('$FILE')); print(d.get('stats',{}).get('collected',0))")
-            NEED_RETRY=$(python3 -c "print('true' if float('$BLOCK_RATE') >= 0.5 else 'false')")
+            # ✅ 차단 지역이 하나라도 있으면 재시도
+            NEED_RETRY=$(python3 -c "print('true' if int('$BLOCKED_COUNT') > 0 else 'false')")
             echo "need_retry=$NEED_RETRY" >> $GITHUB_OUTPUT
-            echo "수집: $COLLECTED건 / 차단율: $BLOCK_RATE"
+            echo "수집: $COLLECTED건 / 차단지역: $BLOCKED_COUNT개"
           else
             echo "need_retry=true" >> $GITHUB_OUTPUT
           fi
