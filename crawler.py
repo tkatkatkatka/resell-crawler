@@ -96,21 +96,34 @@ def main():
     global delay_min, delay_max
     keyword      = sys.argv[1] if len(sys.argv) > 1 else '루이비통'
     chunk        = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-    total_chunks = int(sys.argv[3]) if len(sys.argv) > 3 else 80
-    max_workers  = int(sys.argv[4])   if len(sys.argv) > 4 else 3
-    delay_min    = float(sys.argv[5]) if len(sys.argv) > 5 else 0.5
-    delay_max    = float(sys.argv[6]) if len(sys.argv) > 6 else 1.0
+
+    # 전달된 인자 개수 (스크립트 이름 제외)
+    arg_count = len(sys.argv) - 1
+
+    if arg_count >= 6:
+        total_chunks = int(sys.argv[3])
+        max_workers  = int(sys.argv[4])
+        delay_min    = float(sys.argv[5])
+        delay_max    = float(sys.argv[6])
+        is_retry = False
+    else:
+        total_chunks = None
+        max_workers  = int(sys.argv[3]) if arg_count >= 3 else 3
+        delay_min    = float(sys.argv[4]) if arg_count >= 4 else 0.5
+        delay_max    = float(sys.argv[5]) if arg_count >= 5 else 1.0
+        is_retry = True
 
     print(f"=== Crawler 시작 ===")
-    print(f"키워드: {keyword}, 청크: {chunk}/{total_chunks}, workers: {max_workers}, 딜레이: {delay_min}~{delay_max}")
+    print(f"키워드: {keyword}, 청크: {chunk}, workers: {max_workers}, 딜레이: {delay_min}~{delay_max}, 재시도: {is_retry}")
 
     output_file = f'results_{chunk}.json'
     existing_results = {}
     existing_blocked = []
-    is_retry = False
 
-    if os.path.exists(output_file):
-        is_retry = True
+    if is_retry:
+        if not os.path.exists(output_file):
+            print(f"❌ 재시도 모드이나 결과 파일이 없습니다: {output_file}")
+            sys.exit(1)
         print(f"📂 기존 결과 파일 발견: {output_file} → 차단 지역만 재시도합니다.")
         with open(output_file, 'r', encoding='utf-8') as f:
             old_data = json.load(f)
@@ -118,6 +131,9 @@ def main():
                 existing_results[item['id']] = item
             existing_blocked = old_data.get('blocked_regions', [])
         print(f"   기존 수집: {len(existing_results)}건, 차단 지역: {len(existing_blocked)}개")
+        if not existing_blocked:
+            print("⚠️ 재시도할 차단 지역이 없습니다. 종료합니다.")
+            return
     else:
         print(f"🆕 첫 실행: 전체 지역을 크롤링합니다.")
 
@@ -129,25 +145,17 @@ def main():
         print(f"❌ regions.json 로드 실패: {e}")
         sys.exit(1)
 
-    total = len(all_regions)
-    chunk_size = (total + total_chunks - 1) // total_chunks
-    start = (chunk - 1) * chunk_size
-    end = min(start + chunk_size, total)
-    regions = all_regions[start:end]
-
     if is_retry:
-        filtered_regions = []
         blocked_set = set(existing_blocked)
-        for r in regions:
-            if str(r.get('id', '')) in blocked_set:
-                filtered_regions.append(r)
-        regions = filtered_regions
+        regions = [r for r in all_regions if str(r.get('id', '')) in blocked_set]
         print(f"🔄 재시도 대상 지역: {len(regions)}개")
-        if not regions:
-            print("⚠️ 재시도할 차단 지역이 없습니다. 기존 결과를 유지합니다.")
-            return
-
-    print(f"청크 범위: {start}~{end} (총 {len(regions)}개 지역)")
+    else:
+        total = len(all_regions)
+        chunk_size = (total + total_chunks - 1) // total_chunks
+        start = (chunk - 1) * chunk_size
+        end = min(start + chunk_size, total)
+        regions = all_regions[start:end]
+        print(f"청크 범위: {start}~{end} (총 {len(regions)}개 지역)")
 
     results = dict(existing_results) if is_retry else {}
     blocked_regions = []
