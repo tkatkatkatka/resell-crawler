@@ -42,8 +42,8 @@ jobs:
         run: |
           python3 - << 'PYEOF'
           import json, os
-          s = int(os.environ.get('CHUNK_START', '1'))
-          e = int(os.environ.get('CHUNK_END', '20'))
+          s = int(os.environ.get('CHUNK_START', '41'))
+          e = int(os.environ.get('CHUNK_END', '60'))
           matrix = json.dumps({"chunk": list(range(s, e + 1))})
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"matrix={matrix}\n")
@@ -109,7 +109,6 @@ jobs:
           python crawler.py
           "${{ github.event.inputs.keyword }}"
           "${{ matrix.chunk }}"
-          "${{ github.event.inputs.total_chunks }}"
           "${{ github.event.inputs.max_workers }}"
           "${{ github.event.inputs.delay_min }}"
           "${{ github.event.inputs.delay_max }}"
