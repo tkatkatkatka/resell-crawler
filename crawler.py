@@ -7,6 +7,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import os
+import re
 
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -68,19 +69,29 @@ def search_region(keyword, region_id, retry=0):
             return search_region(keyword, region_id, retry + 1)
         return 'timeout', []
 
-def parse_articles(articles):
+def parse_articles(articles, keyword):
+    """매물 파싱 + 브랜드 필터 (제목에 검색어 포함 필수)"""
     results = []
+    kw_lower = keyword.lower() if keyword else ''
+    
     for a in articles:
         aid = a.get('id')
         if not aid or a.get('status') != 'Ongoing':
             continue
+        
+        title = a.get('title', '')
+        
+        # ✅ 브랜드 필터: 제목에 검색어(브랜드명)가 없으면 건너뜀
+        if kw_lower and kw_lower not in title.lower():
+            continue
+        
         price_raw = a.get('price') or '0'
         price = int(float(price_raw)) if price_raw else 0
         region = a.get('region', {})
         rname = region.get('name3') or region.get('name') or ''
         results.append({
             'id': aid,
-            'title': a.get('title', ''),
+            'title': title,
             'price': price,
             'price_fmt': f"{price:,}원" if price else '가격없음',
             'thumbnail': a.get('thumbnail', ''),
@@ -97,9 +108,8 @@ def main():
     keyword      = sys.argv[1] if len(sys.argv) > 1 else '루이비통'
     chunk        = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 
-    # 전달된 인자 개수 (스크립트 이름 제외)
+    # 인자 개수로 1차/2차 구분
     arg_count = len(sys.argv) - 1
-
     if arg_count >= 6:
         total_chunks = int(sys.argv[3])
         max_workers  = int(sys.argv[4])
@@ -185,7 +195,7 @@ def main():
             return
 
         if status == 'ok':
-            parsed = parse_articles(articles)
+            parsed = parse_articles(articles, keyword)   # ✅ keyword 전달
             with lock:
                 for item in parsed:
                     results[item['id']] = item
