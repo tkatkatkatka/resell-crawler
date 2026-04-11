@@ -47,7 +47,7 @@ def get_headers():
         'Connection': 'keep-alive',
     }
 
-def search_region(keyword, region_id, retry=0):
+def search_region(keyword, region_id, delay_min, delay_max, retry=0):
     kw_enc = urllib.parse.quote(keyword)
     url = (f'https://www.daangn.com/kr/buy-sell/'
            f'?search={kw_enc}&in={region_id}'
@@ -66,25 +66,31 @@ def search_region(keyword, region_id, retry=0):
         print(f"  [ERROR] 지역 {region_id} 예외: {e}")
         if retry < 2:
             time.sleep(random.uniform(1.0, 2.0))
-            return search_region(keyword, region_id, retry + 1)
+            return search_region(keyword, region_id, delay_min, delay_max, retry + 1)
         return 'timeout', []
 
-def parse_articles(articles, keyword):
-    """매물 파싱 + 브랜드 필터 (제목에 검색어 포함 필수)"""
+def parse_articles(articles, keyword, search_scope):
+    """매물 파싱 + 검색 범위에 따른 필터링 (제목만 / 제목+내용)"""
     results = []
     kw_lower = keyword.lower() if keyword else ''
-    
+
     for a in articles:
         aid = a.get('id')
         if not aid or a.get('status') != 'Ongoing':
             continue
-        
+
         title = a.get('title', '')
-        
-        # ✅ 브랜드 필터: 제목에 검색어(브랜드명)가 없으면 건너뜀
-        if kw_lower and kw_lower not in title.lower():
-            continue
-        
+        content = a.get('content', '')
+
+        # 검색 범위에 따른 필터링
+        if kw_lower:
+            if search_scope == 'title':
+                if kw_lower not in title.lower():
+                    continue
+            else:  # 'both'
+                if kw_lower not in title.lower() and kw_lower not in content.lower():
+                    continue
+
         price_raw = a.get('price') or '0'
         price = int(float(price_raw)) if price_raw else 0
         region = a.get('region', {})
@@ -99,32 +105,72 @@ def parse_articles(articles, keyword):
             'region': rname,
             'full_region': f"{region.get('name1','')} {region.get('name2','')} {rname}".strip(),
             'created_at': a.get('createdAt') or a.get('boostedAt', ''),
-            'content': (a.get('content') or '')[:100],
+            'content': content[:100],
         })
     return results
 
 def main():
-    global delay_min, delay_max
-    keyword      = sys.argv[1] if len(sys.argv) > 1 else '루이비통'
-    chunk        = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-
-    # 인자 개수로 1차/2차 구분
     arg_count = len(sys.argv) - 1
-    if arg_count >= 6:
-        total_chunks = int(sys.argv[3])
-        max_workers  = int(sys.argv[4])
-        delay_min    = float(sys.argv[5])
-        delay_max    = float(sys.argv[6])
+
+    # 기본값
+    keyword = '루이비통'
+    search_scope = 'both'   # 기본값: 제목+내용
+    chunk = 1
+    total_chunks = None
+    max_workers = 3
+    delay_min = 0.5
+    delay_max = 1.0
+    is_retry = False
+
+    # 인자 개수에 따라 분기 (app.py에서 보내는 순서: keyword, search_scope, chunk, total_chunks, max_workers, delay_min, delay_max)
+    if arg_count >= 7:
+        # 정상 실행 (1차 시도) : 7개 인자
+        keyword = sys.argv[1]
+        search_scope = sys.argv[2]
+        chunk = int(sys.argv[3])
+        total_chunks = int(sys.argv[4])
+        max_workers = int(sys.argv[5])
+        delay_min = float(sys.argv[6])
+        delay_max = float(sys.argv[7])
         is_retry = False
-    else:
-        total_chunks = None
-        max_workers  = int(sys.argv[3]) if arg_count >= 3 else 3
-        delay_min    = float(sys.argv[4]) if arg_count >= 4 else 0.5
-        delay_max    = float(sys.argv[5]) if arg_count >= 5 else 1.0
+    elif arg_count >= 5 and arg_count <= 6:
+        # 재시도 모드 (이전 결과 파일 존재, 차단 지역만 재시도)
+        # 인자: keyword, search_scope, chunk, max_workers, delay_min, delay_max (6개) 또는 keyword, chunk, max_workers, delay_min, delay_max (5개, 구버전 호환)
+        if arg_count == 6:
+            keyword = sys.argv[1]
+            search_scope = sys.argv[2]
+            chunk = int(sys.argv[3])
+            max_workers = int(sys.argv[4])
+            delay_min = float(sys.argv[5])
+            delay_max = float(sys.argv[6])
+        else:  # 5개 (search_scope 없음 -> 기본 both)
+            keyword = sys.argv[1]
+            chunk = int(sys.argv[2])
+            max_workers = int(sys.argv[3])
+            delay_min = float(sys.argv[4])
+            delay_max = float(sys.argv[5])
+            search_scope = 'both'
         is_retry = True
+        total_chunks = None  # 재시도 시에는 청크 범위 재계산 안 함
+    else:
+        # 인자 부족 (직접 실행 등) - 기본값 사용
+        print(f"⚠️ 인자 부족 ({arg_count}개). 기본값으로 실행합니다.")
+        if arg_count >= 1:
+            keyword = sys.argv[1]
+        if arg_count >= 2:
+            search_scope = sys.argv[2]
+        if arg_count >= 3:
+            chunk = int(sys.argv[3])
+        if arg_count >= 4:
+            max_workers = int(sys.argv[4])
+        if arg_count >= 5:
+            delay_min = float(sys.argv[5])
+        if arg_count >= 6:
+            delay_max = float(sys.argv[6])
+        is_retry = False
 
     print(f"=== Crawler 시작 ===")
-    print(f"키워드: {keyword}, 청크: {chunk}, workers: {max_workers}, 딜레이: {delay_min}~{delay_max}, 재시도: {is_retry}")
+    print(f"키워드: {keyword}, 검색범위: {search_scope}, 청크: {chunk}, workers: {max_workers}, 딜레이: {delay_min}~{delay_max}, 재시도: {is_retry}")
 
     output_file = f'results_{chunk}.json'
     existing_results = {}
@@ -181,7 +227,7 @@ def main():
             print(f"  [경고] 지역 ID 없음: {region}")
             return
 
-        status, articles = search_region(keyword, rid)
+        status, articles = search_region(keyword, rid, delay_min, delay_max)
 
         if status == 'blocked':
             with lock:
@@ -195,7 +241,7 @@ def main():
             return
 
         if status == 'ok':
-            parsed = parse_articles(articles, keyword)   # ✅ keyword 전달
+            parsed = parse_articles(articles, keyword, search_scope)
             with lock:
                 for item in parsed:
                     results[item['id']] = item
