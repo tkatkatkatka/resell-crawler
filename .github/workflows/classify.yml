@@ -1,10 +1,31 @@
-- name: Get latest classifier from central repo
-  run: git clone https://github.com/dlfdlfdlfdlfdlf/resell-classifier.git classifier_repo
+name: Classify Items
 
-- name: Run classifier
-  run: |
-    cd classifier_repo
-    python classifier.py \
-      --server ${{ github.event.inputs.server_url }} \
-      --chunk_start ${{ github.event.inputs.chunk_start }} \
-      --chunk_end ${{ github.event.inputs.chunk_end }}
+on:
+  workflow_dispatch:
+    inputs:
+      chunk_start:
+        description: '시작 인덱스'
+        required: true
+      chunk_end:
+        description: '끝 인덱스'
+        required: true
+      server_url:
+        description: '서버 주소'
+        required: true
+        default: 'http://localhost:5000'
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get classifier from central repo
+        run: git clone https://github.com/dlfdlfdlfdlfdlf/resell-classifier.git classifier_repo
+      - name: Run classifier
+        run: |
+          cd classifier_repo
+          python classifier.py --server ${{ github.event.inputs.server_url }} --chunk_start ${{ github.event.inputs.chunk_start }} --chunk_end ${{ github.event.inputs.chunk_end }}
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: classify-chunk-${{ github.event.inputs.chunk_start }}-${{ github.event.inputs.chunk_end }}
+          path: classifier_repo/classify_result_*.json
