@@ -1,0 +1,10 @@
+- name: Get latest classifier from central repo
+  run: git clone https://github.com/dlfdlfdlfdlfdlf/resell-classifier.git classifier_repo
+
+- name: Run classifier
+  run: |
+    cd classifier_repo
+    python classifier.py \
+      --server ${{ github.event.inputs.server_url }} \
+      --chunk_start ${{ github.event.inputs.chunk_start }} \
+      --chunk_end ${{ github.event.inputs.chunk_end }}
