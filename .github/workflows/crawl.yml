@@ -85,33 +85,6 @@ jobs:
           "${{ github.event.inputs.delay_max }}"
         continue-on-error: true
 
-      - name: Check if retry needed
-        id: check
-        run: |
-          FILE="results_${{ matrix.chunk }}.json"
-          if [ -f "$FILE" ]; then
-            BLOCKED_COUNT=$(python3 -c "import json; d=json.load(open('$FILE')); print(len(d.get('blocked_regions', [])))")
-            COLLECTED=$(python3 -c "import json; d=json.load(open('$FILE')); print(d.get('stats',{}).get('collected',0))")
-            NEED_RETRY=$(python3 -c "print('true' if int('$BLOCKED_COUNT') > 0 else 'false')")
-            echo "need_retry=$NEED_RETRY" >> $GITHUB_OUTPUT
-            echo "수집: $COLLECTED건 / 차단지역: $BLOCKED_COUNT개"
-          else
-            echo "need_retry=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Wait before retry
-        if: steps.check.outputs.need_retry == 'true'
-        run: sleep 60
-
-      - name: Run crawler (2차 재시도)
-        if: steps.check.outputs.need_retry == 'true'
-        run: >
-          python crawler.py
-          "${{ github.event.inputs.keyword }}"
-          "${{ matrix.chunk }}"
-          "${{ github.event.inputs.max_workers }}"
-          "${{ github.event.inputs.delay_min }}"
-          "${{ github.event.inputs.delay_max }}"
 
       - name: Upload results
         uses: actions/upload-artifact@v4
