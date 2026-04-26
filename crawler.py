@@ -70,8 +70,11 @@ def parse_articles(articles, keyword, search_scope):
     results = []
     kw_lower = keyword.lower() if keyword else ''
     for a in articles:
-        aid = a.get('id')
-        if not aid or a.get('status') != 'Ongoing':
+        aid_raw = a.get('id') or a.get('href', '')
+        if not aid_raw or a.get('status') != 'Ongoing':
+            continue
+        aid = aid_raw.rstrip('/').split('/')[-1]
+        if not aid:
             continue
         title   = a.get('title', '')
         content = a.get('content', '')
@@ -160,6 +163,8 @@ def main():
         if not existing_blocked:
             print("⚠️ 재시도할 차단 지역이 없습니다. 종료합니다.")
             return
+    else:
+        print(f"🆕 첫 실행: 전체 지역을 크롤링합니다.")
 
     try:
         with open('regions.json', encoding='utf-8') as f:
@@ -172,6 +177,7 @@ def main():
     if is_retry:
         blocked_set = set(existing_blocked)
         regions     = [r for r in all_regions if str(r.get('id', '')) in blocked_set]
+        print(f"🔄 재시도 대상 지역: {len(regions)}개")
     else:
         total      = len(all_regions)
         chunk_size = (total + total_chunks - 1) // total_chunks
