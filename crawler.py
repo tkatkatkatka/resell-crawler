@@ -1,9 +1,8 @@
-import sys    
+import sys
 import json
 import time
 import random
 import urllib.parse
-import hashlib
 import requests
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -12,20 +11,26 @@ import os
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0',
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
 ]
 ACCEPT_LANGS = [
     'ko-KR,ko;q=0.9',
     'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
     'ko,en-US;q=0.9,en;q=0.8',
+    'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
 ]
 REFERERS = [
     'https://www.daangn.com/kr/buy-sell/',
     'https://www.daangn.com/kr/buy-sell/s/',
     'https://www.daangn.com/kr/',
+    'https://www.daangn.com/',
 ]
 
 def get_headers():
@@ -41,101 +46,32 @@ def get_headers():
         'Connection': 'keep-alive',
     }
 
-def solve_pow(challenge, difficulty):
-    target = difficulty // 4
-    nonce = random.randint(0, 100000)
-    for _ in range(10_000_000):
-        h = hashlib.sha256(f'{challenge}{nonce}'.encode()).hexdigest()
-        if h[:target] == '0' * target:
-            return nonce
-        nonce += 1
-    return nonce
-
-def get_pow_token(keyword, session):
+def search_region(keyword, region_id, delay_min, delay_max, retry=0):
     kw_enc = urllib.parse.quote(keyword)
-    url = f'https://www.daangn.com/kr/buy-sell/s/?search={kw_enc}&_data=routes%2Fkr.buy-sell.s'
-    try:
-        r = session.get(url, headers=get_headers(), timeout=10)
-        if r.status_code != 200:
-            return {}
-        data = r.json()
-        pow_data = data.get('pow', {})
-        if not pow_data:
-            return {}
-        challenge  = pow_data.get('challenge', '')
-        difficulty = pow_data.get('difficulty', 4)
-        expires_at = pow_data.get('expiresAt', 0)
-        if not challenge:
-            return {}
-        print(f'[PoW] 챌린지 풀이 중 (difficulty={difficulty})...')
-        nonce = solve_pow(challenge, difficulty)
-        print(f'[PoW] 완료 nonce={nonce}')
-        return {'nonce': nonce, 'expires_at': expires_at}
-    except Exception as e:
-        print(f'  [PoW] 오류: {e}')
-        return {}
-
-def search_region(keyword, region_id, delay_min, delay_max, session, pow_cache, pow_lock, retry=0):
-    kw_enc = urllib.parse.quote(keyword)
-    with pow_lock:
-        pow_token  = pow_cache.get('token', {})
-        pow_expires = pow_cache.get('expires', 0)
-    now_ms = int(time.time() * 1000)
-    if not pow_token or now_ms >= pow_expires - 5000:
-        new_token = get_pow_token(keyword, session)
-        if new_token:
-            with pow_lock:
-                pow_cache['token']   = new_token
-                pow_cache['expires'] = new_token.get('expires_at', 0)
-            pow_token = new_token
-        else:
-            return 'timeout', []
-    nonce      = pow_token.get('nonce', 0)
-    expires_at = pow_token.get('expires_at', 0)
-    search_uri = urllib.parse.quote(
-        f'http://www.daangn.com/kr/buy-sell/s/?search={kw_enc}', safe=''
-    )
-    url = (
-        f'https://www.daangn.com/kr/api/v1/fleamarket/search'
-        f'?region_id={region_id}'
-        f'&search={kw_enc}'
-        f'&uri={search_uri}'
-        f'&nonce={nonce}'
-        f'&expires_at={expires_at}'
-    )
+    url = (f'https://www.daangn.com/kr/buy-sell/'
+           f'?search={kw_enc}&in={region_id}'
+           f'&_data=routes%2Fkr.buy-sell._index')
     try:
         time.sleep(random.uniform(delay_min, delay_max))
-        r = session.get(url, headers=get_headers(), timeout=15)
+        r = requests.get(url, headers=get_headers(), timeout=15)
         if r.status_code in (403, 429):
             return 'blocked', []
-        if r.status_code == 401:
-            with pow_lock:
-                pow_cache['token']   = {}
-                pow_cache['expires'] = 0
-            if retry < 2:
-                time.sleep(1.0)
-                return search_region(keyword, region_id, delay_min, delay_max, session, pow_cache, pow_lock, retry+1)
-            return 'timeout', []
-        data     = r.json()
-        articles = data.get('fleamarketArticles', [])
+        data = r.json()
+        articles = (data.get('allPage') or {}).get('fleamarketArticles', [])
         return 'ok', articles
     except Exception as e:
-        print(f'  [ERROR] 지역 {region_id} 예외: {e}')
+        print(f"  [ERROR] 지역 {region_id} 예외: {e}")
         if retry < 2:
             time.sleep(random.uniform(1.0, 2.0))
-            return search_region(keyword, region_id, delay_min, delay_max, session, pow_cache, pow_lock, retry+1)
+            return search_region(keyword, region_id, delay_min, delay_max, retry + 1)
         return 'timeout', []
 
 def parse_articles(articles, keyword, search_scope):
-    results  = []
+    results = []
     kw_lower = keyword.lower() if keyword else ''
     for a in articles:
-        aid = a.get('id', '')
-        if not aid:
-            continue
-        slug   = aid.rstrip('/').split('/')[-1]
-        status = a.get('status', '')
-        if status != 'Ongoing':
+        aid = a.get('id')
+        if not aid or a.get('status') != 'Ongoing':
             continue
         title   = a.get('title', '')
         content = a.get('content', '')
@@ -146,24 +82,21 @@ def parse_articles(articles, keyword, search_scope):
             else:
                 if kw_lower not in title.lower() and kw_lower not in content.lower():
                     continue
-        price_raw = a.get('price') or '0'
-        try:
-            price = int(float(price_raw))
-        except:
-            price = 0
+        price_raw  = a.get('price') or '0'
+        price      = int(float(price_raw)) if price_raw else 0
         region     = a.get('region', {})
-        rname      = region.get('name', '') or ''
+        rname      = region.get('name3') or region.get('name') or ''
         created_at = a.get('createdAt', '')
         boosted_at = a.get('boostedAt', '')
         results.append({
-            'id':         slug,
+            'id':         aid,
             'title':      title,
             'price':      price,
             'price_fmt':  f"{price:,}원" if price else '가격없음',
             'thumbnail':  a.get('thumbnail', ''),
             'url':        a.get('href', ''),
             'region':     rname,
-            'full_region': rname,
+            'full_region': f"{region.get('name1','')} {region.get('name2','')} {rname}".strip(),
             'created_at': created_at or boosted_at,
             'boosted_at': boosted_at,
             'content':    content[:100],
@@ -172,14 +105,14 @@ def parse_articles(articles, keyword, search_scope):
 
 def main():
     arg_count = len(sys.argv) - 1
-    keyword = '루이비통'
+    keyword      = '루이비통'
     search_scope = 'both'
-    chunk = 1
+    chunk        = 1
     total_chunks = None
-    max_workers = 3
-    delay_min = 0.5
-    delay_max = 1.0
-    is_retry = False
+    max_workers  = 3
+    delay_min    = 0.5
+    delay_max    = 1.0
+    is_retry     = False
 
     if arg_count >= 7:
         keyword      = sys.argv[1]
@@ -211,7 +144,7 @@ def main():
     print(f"=== Crawler 시작 ===")
     print(f"키워드: {keyword}, 검색범위: {search_scope}, 청크: {chunk}, workers: {max_workers}, 딜레이: {delay_min}~{delay_max}, 재시도: {is_retry}")
 
-    output_file = f'results_{chunk}.json'
+    output_file      = f'results_{chunk}.json'
     existing_results = {}
     existing_blocked = []
 
@@ -238,7 +171,7 @@ def main():
 
     if is_retry:
         blocked_set = set(existing_blocked)
-        regions = [r for r in all_regions if str(r.get('id', '')) in blocked_set]
+        regions     = [r for r in all_regions if str(r.get('id', '')) in blocked_set]
     else:
         total      = len(all_regions)
         chunk_size = (total + total_chunks - 1) // total_chunks
@@ -247,20 +180,7 @@ def main():
         regions    = all_regions[start:end]
         print(f"청크 범위: {start}~{end} (총 {len(regions)}개 지역)")
 
-    session    = requests.Session()
-    pow_cache  = {'token': {}, 'expires': 0}
-    pow_lock   = threading.Lock()
-
-    print('[PoW] 초기 토큰 획득 중...')
-    init_token = get_pow_token(keyword, session)
-    if init_token:
-        pow_cache['token']   = init_token
-        pow_cache['expires'] = init_token.get('expires_at', 0)
-        print(f'[PoW] 토큰 획득 완료')
-    else:
-        print('[PoW] 초기 토큰 획득 실패 - 계속 진행')
-
-    results       = dict(existing_results) if is_retry else {}
+    results         = dict(existing_results) if is_retry else {}
     blocked_regions = []
     done = blocked = timeout_cnt = 0
     lock = threading.Lock()
@@ -270,9 +190,7 @@ def main():
         rid = str(region.get('id', ''))
         if not rid:
             return
-        status, articles = search_region(
-            keyword, rid, delay_min, delay_max, session, pow_cache, pow_lock
-        )
+        status, articles = search_region(keyword, rid, delay_min, delay_max)
         if status == 'blocked':
             with lock:
                 blocked += 1
