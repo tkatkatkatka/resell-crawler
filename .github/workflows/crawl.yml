@@ -1,5 +1,4 @@
 name: Daangn Crawler
-
 on:
   workflow_dispatch:
     inputs:
@@ -35,7 +34,6 @@ on:
         description: '딜레이 최대(초)'
         required: false
         default: '1.0'
-
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -56,29 +54,23 @@ jobs:
         env:
           CHUNK_START: ${{ github.event.inputs.chunk_start }}
           CHUNK_END: ${{ github.event.inputs.chunk_end }}
-
   crawl:
     needs: setup
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
-      max-parallel: 50
+      max-parallel: 20
       fail-fast: false
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install requests
-
-      - name: Run crawler (1차 시도)
-        id: crawl1
+      - name: Run crawler
         run: >
           python crawler.py
           "${{ github.event.inputs.keyword }}"
@@ -89,7 +81,6 @@ jobs:
           "${{ github.event.inputs.delay_min }}"
           "${{ github.event.inputs.delay_max }}"
         continue-on-error: true
-
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
