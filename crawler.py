@@ -71,20 +71,22 @@ def parse_articles(articles, keyword, search_scope):
     kw_lower = keyword.lower() if keyword else ''
     for a in articles:
         aid_raw = a.get('id') or a.get('href', '')
-        if not aid_raw or a.get('status') != 'Ongoing':
+        status  = a.get('status', 'Ongoing')
+        if not aid_raw:
             continue
         aid = aid_raw.rstrip('/').split('/')[-1]
         if not aid:
             continue
         title   = a.get('title', '')
         content = a.get('content', '')
-        if kw_lower:
-            if search_scope == 'title':
-                if kw_lower not in title.lower():
-                    continue
-            else:
-                if kw_lower not in title.lower() and kw_lower not in content.lower():
-                    continue
+        if status in ('Ongoing', 'Reserved'):
+            if kw_lower:
+                if search_scope == 'title':
+                    if kw_lower not in title.lower():
+                        continue
+                else:
+                    if kw_lower not in title.lower() and kw_lower not in content.lower():
+                        continue
         price_raw  = a.get('price') or '0'
         price      = int(float(price_raw)) if price_raw else 0
         region     = a.get('region', {})
@@ -103,7 +105,13 @@ def parse_articles(articles, keyword, search_scope):
             'created_at': created_at or boosted_at,
             'boosted_at': boosted_at,
             'content':    content[:100],
+            'status':     status,
         })
+    ongoing  = sum(1 for r in results if r.get('status') == 'Ongoing')
+    reserved = sum(1 for r in results if r.get('status') == 'Reserved')
+    closed   = sum(1 for r in results if r.get('status') == 'Closed')
+    if results:
+        print(f'[수집] 판매중: {ongoing} / 예약중: {reserved} / 판매완료: {closed} / 총: {len(results)}')
     return results
 
 def main():
